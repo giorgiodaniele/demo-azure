@@ -69,44 +69,109 @@ resource "azurerm_network_security_group" "nsg" {
      location            = azurerm_resource_group.rg.location
      resource_group_name = azurerm_resource_group.rg.name
 
-     # allow http traffic
+     # SSH
      security_rule {
-          name                       = "allow-tcp-8080"
-          priority                   = 100
-          direction                  = "Inbound"
-          access                     = "Allow"
-          protocol                   = "Tcp"
-          source_port_range          = "*"
-          destination_port_range     = "8080"
-          source_address_prefix      = "*"
-          destination_address_prefix = "*"
+     name                       = "allow-tcp-22"
+     priority                   = 100
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "22"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
      }
 
-     # allow http traffic
+     # AKHQ (UI Kafka)
      security_rule {
-          name                       = "allow-tcp-80"
-          priority                   = 101
-          direction                  = "Inbound"
-          access                     = "Allow"
-          protocol                   = "Tcp"
-          source_port_range          = "*"
-          destination_port_range     = "80"
-          source_address_prefix      = "*"
-          destination_address_prefix = "*"
+     name                       = "allow-tcp-8080"
+     priority                   = 110
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "8080"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
      }
 
-     # allow ssh traffic
+     # Kafka (client esterni)
      security_rule {
-          name                       = "allow-tcp-22"
-          priority                   = 102
-          direction                  = "Inbound"
-          access                     = "Allow"
-          protocol                   = "Tcp"
-          source_port_range          = "*"
-          destination_port_range     = "22"
-          source_address_prefix      = "*"
-          destination_address_prefix = "*"
+     name                       = "allow-tcp-9092"
+     priority                   = 120
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "9092"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
      }
+
+     # Schema Registry
+     security_rule {
+     name                       = "allow-tcp-8085"
+     priority                   = 130
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "8085"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
+     }
+
+     # Kafka Connect
+     security_rule {
+     name                       = "allow-tcp-8083"
+     priority                   = 140
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "8083"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
+     }
+
+     # Prometheus
+     security_rule {
+     name                       = "allow-tcp-9090"
+     priority                   = 150
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "9090"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
+     }
+
+     # Grafana
+     security_rule {
+     name                       = "allow-tcp-3000"
+     priority                   = 160
+     direction                  = "Inbound"
+     access                     = "Allow"
+     protocol                   = "Tcp"
+     source_port_range          = "*"
+     destination_port_range     = "3000"
+     source_address_prefix      = "*"
+     destination_address_prefix = "*"
+     }
+
+     # JMX Kafka (opzionale, solo se serve davvero)
+     # security_rule {
+     #   name                       = "allow-tcp-9091"
+     #   priority                   = 170
+     #   direction                  = "Inbound"
+     #   access                     = "Allow"
+     #   protocol                   = "Tcp"
+     #   source_port_range          = "*"
+     #   destination_port_range     = "9091"
+     #   source_address_prefix      = "*"
+     #   destination_address_prefix = "*"
+     # }
 
      tags = {
      environment = "${local.environment}"
