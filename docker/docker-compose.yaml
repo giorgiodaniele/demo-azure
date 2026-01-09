@@ -4,233 +4,196 @@ volumes:
 
 services:
 
-  akhq:
-    # build:
-    #   context: .
-    image: tchiotludo/akhq:latest
-    container_name: akhq
-    restart: on-failure
-#    restart: unless-stopped
+  # Kafka
+  kafka:
+      image: confluentinc/cp-kafka:8.0.0
+      hostname: kafka
+      container_name: kafka
+      ports:
+        - "9092:9092"
+        - "9091:9091"
+        - "1234:1234"
+      volumes:
+        - kafka-data:/var/lib/kafka/data:Z
+        # - ./kafka/prometheus:/opt/prometheus:Z
+      environment:
+
+        # Configurazione di un processo kafka con il ruolo di
+        # broker e controller. Si definiscono due listeners,
+        # uno per parlare con gli altri broker (PLAINTEXT),
+        # l'altro per parlare con altri controller (CONTROLLER)
+        KAFKA_NODE_ID: 1
+        KAFKA_PROCESS_ROLES:                  broker,controller
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+        KAFKA_LISTENERS:                      CONTROLLER://kafka:29093,PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092
+        KAFKA_CONTROLLER_LISTENER_NAMES:      CONTROLLER
+        KAFKA_INTER_BROKER_LISTENER_NAME:     PLAINTEXT
+        KAFKA_CONTROLLER_QUORUM_VOTERS:       1@kafka:29093'
+        KAFKA_ADVERTISED_LISTENERS:           PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092
+
+        # Dato un topic, questo può avere da 1 ad N partizioni
+        # Ogni partizione è il contenitore logico dei messaggi
+        # inviati al topic. I messaggi sono salvati in formato
+        # compresso utilizzando gzip.
+        KAFKA_NUM_PARTITIONS:                           12
+        KAFKA_COMPRESSION_TYPE:                         gzip
+        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:         1
+        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:            1
+        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+        # KAFKA_LOG_DIRS:                  '/tmp/kraft-combined-logs'
+        # KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+        CLUSTER_ID:                      'MkU3OEVBNTcwNTJENDM2Qk'
+        # JMX & Prometheus settings
+        KAFKA_JMX_PORT:     9091
+        KAFKA_JMX_HOSTNAME: localhost
+        KAFKA_JMX_OPTS: |
+          -Dcom.sun.management.jmxremote=true 
+          -Dcom.sun.management.jmxremote.rmi.port=9091 
+          -Dcom.sun.management.jmxremote.authenticate=false 
+          -Dcom.sun.management.jmxremote.ssl=false 
+          -Dcom.sun.management.jmxremote.local.only=false 
+          -javaagent:/usr/share/java/cp-base-new/jmx_prometheus_javaagent-0.20.0.jar=1234:/opt/prometheus/config.yaml
+
+  # Servizio HTTP che salva gli schema Avro/JSON/Protobuf in Kafka
+  # Si collega al cluster Kakfa come client ed espone un listeners
+  # a tutto il mondo sulla porta 8085
+  schema-registry:
+    image:          confluentinc/cp-schema-registry:8.0.0
+    hostname:       schema-registry
+    container_name: schema-registry
+    # ports:
+    #   - "8085:8085"
+    depends_on:
+      - kafka
     environment:
-      AGENTS_URL: "http://agents:8000/agents"
+      SCHEMA_REGISTRY_HOST_NAME:                    schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
+      SCHEMA_REGISTRY_LISTENERS:                    'http://0.0.0.0:8085'
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL:          'INFO'
+
+  # Kakfa connect è un servizio che consente di eseguire dei connettori
+  # ossia, delle procedure standard per trasferire dati da/verso Kakfa
+  # in modo trasparente. Anch'esso è un client del cluster Kafka, si
+  # collega ai broker ed espone un listener sulla porta 8083
+  connect:
+    image:          cnfldemos/kafka-connect-datagen:0.6.7-8.0.0
+    hostname:       connect
+    container_name: connect
+    depends_on:
+      - kafka
+      - schema-registry
+    # ports:
+    #   - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS:        'kafka:29092'
+      CONNECT_REST_PORT:                 8083
+      CONNECT_REST_LISTENERS:           'http://0.0.0.0:8083'
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: 'kafka-connect'
+      CONNECT_CONFIG_STORAGE_TOPIC: '__connect-config'
+      CONNECT_OFFSET_STORAGE_TOPIC: '__connect-offsets'
+      CONNECT_STATUS_STORAGE_TOPIC: '__connect-status'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER:    'org.apache.kafka.connect.storage.StringConverter'
+      CONNECT_VALUE_CONVERTER: 'io.confluent.connect.avro.AvroConverter'
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: 'http://schema-registry:8085'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+
+  akhq:
+    image:          tchiotludo/akhq:latest
+    container_name: akhq
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+      - schema-registry
+      - connect
+    environment:
+      AGENTS_URL: http://agents:8000/agents
       AKHQ_CONFIGURATION: |
         akhq:
           connections:
-            my-cluster:
+            local-cluster:
               properties:
-                bootstrap.servers: "kafka:29092"
+                bootstrap.servers: kafka:29092
               schema-registry:
-                url: "http://schema-registry:8085"
+                url: http://schema-registry:8085
               connect:
-                - name: "my-connect"
-                  url: "http://connect:8083"
+                - name: connect
+                  url: http://connect:8083
               ksqldb:
-                - name: "ksqldb"
-                  url: "http://ksqldb-server:8088"
+                - name: ksqldb
+                  url: http://ksqldb-server:8088
         copilotkit:
-          url: "http://localhost:3001"
-    ports:
-      - 8080:8080
-    dns:
-      - 10.190.1.55
-    links:
-      - kafka
-      - schema-registry
-      # - agents
+          url: http://localhost:3001
 
-#   agents:
-#     build:
-#       context: ../agents
-# #    container_name: agents
-#     ports:
-#       - "8000:8000"
-#     env_file:
-#       - ../agents/.env
+  # Optional Agents service (commented out as per original)
+  # agents:
+  #   build:
+  #     context: ../agents
+  #   ports:
+  #     - "8000:8000"
+  #   env_file:
+  #     - ../agents/.env
 
-
-  # In breve, un producer invia un messaggio a Kafka. Kafka 
-  # lo assegna a un topic e a una specifica partizione. La 
-  # partizione è un log append-only scritto in modo 
-  # sequenziale su disco. Per motivi di gestione e performance, 
-  # ogni partizione è suddivisa in più file chiamati segmenti: 
-  # quando un segmento raggiunge una certa dimensione viene
-  # chiuso e ne viene creato uno nuovo. La cancellazione dei 
-  # dati (retention) avviene eliminando segmenti interi.
-  # La struttura su disco per ogni topic è dunque fatta 
-  # così:
-  #   Topic
-  #  └── Partizione 0
-  #      ├── Segmento A
-  #      ├── Segmento B
-  #      └── Segmento C
+  # Grafana permette di creare dashboard interattive per 
+  # la visualizzazione di metriche in tempo reale. Per 
+  # funzionare, Grafana deve essere configurata con una 
+  # o più sorgenti dati, ovvero servizi che raccolgono 
+  # ed espongono le metriche da visualizzare. Una delle 
+  # sorgenti dati più comuni è Prometheus.
   #
-  #
-  # In breve, un’installazione Kafka è composta da due tipi 
-  # di processi: broker e controller. I broker sono replicati 
-  # su più nodi e gestiscono i dati (topic, partizioni e
-  # messaggi),distribuendo carico e storage. I controller
-  # governano il cluster: mantengono i metadata globali e
-  # coordinano i broker tramite un meccanismo di quorum.
-  #
-  #
-  # Ciascun nodo nel cluster Kafka espone uno o più endpoint
-  # di rete (listener), identificati da host e porta.
-  # Le porte usate dipendono dal tipo di comunicazione:
-  # - una porta per il traffico dati (producer/consumer, broker)
-  # - una porta separata per il traffico di controllo (controller)
-  #
-  # In questo modo Kafka separa il piano dati dal piano di
-  # controllo, rendendo il cluster scalabile e consistente.
-  
-  kafka:
-    image: confluentinc/cp-kafka:8.0.0
-    hostname:       kafka
-    container_name: kafka
-    ports:
-      - "9092:9092" # SASL_PLAINTEXT accesso esterno
-      - "9091:9091" # JMX
-      # - "1234:1234" # Prometheus exporter
-    volumes:
-      - kafka-data:/var/lib/kafka/data:Z
-      # - ./kafka/prometheus:/opt/prometheus:Z
-    environment:
-      KAFKA_NODE_ID:                        1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      # Kafka è raggiungibile dentro Docker come kafka:29092 e dall’host come localhost:9092
-      KAFKA_ADVERTISED_LISTENERS:           'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
-      
-      # Configurazioni legate a layout su disco e comportamento dei topic. Ogni nuovo topic 
-      # viene creato con 12 partizioni, ognuna delle quali corrisponde a un log indipendente 
-      # su disco (directory separata). I messaggi vengono scritti  in append e compressi con 
-      # gzip per ridurre l’uso di spazio e banda.
-      KAFKA_NUM_PARTITIONS:                           12
-      KAFKA_COMPRESSION_TYPE:                         gzip
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:         1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS:         0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:            1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-
-      # Impostazioni relative a Prometheus
-      # KAFKA_JMX_PORT: 9091
-      # KAFKA_JMX_HOSTNAME: localhost
-      # KAFKA_JMX_OPTS: '-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.rmi.port=9091 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -javaagent:/usr/share/java/cp-base-new/jmx_prometheus_javaagent-0.20.0.jar=1234:/opt/prometheus/config.yaml'
-      
-      KAFKA_PROCESS_ROLES:              'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS:   '1@kafka:29093'
-      KAFKA_LISTENERS:                  'PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES:  'CONTROLLER'
-      KAFKA_LOG_DIRS:                   '/tmp/kraft-combined-logs'
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE:  'true'
-
-      # Replace CLUSTER_ID with a unique base64 UUID using "bin/kafka-storage.sh random-uuid"
-      # See https://docs.confluent.io/kafka/operations-tools/kafka-tools.html#kafka-storage-sh
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
-
-  schema-registry:
-    image: confluentinc/cp-schema-registry:8.0.0
-    hostname:       schema-registry
-    container_name: schema-registry
-    depends_on:
-      - kafka
-#    ports:
-#      - "8085:8085"
-    environment:
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:29092'
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8085
-      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: 'INFO'
-
-  # Kafka Connect è un servizio che consente la creazione di
-  # strumenti ETL denominati connectors. Ciascun connector
-  # descrive il modo e le condizioni con le quali trasferire
-  # dati da una sorgente A verso Kafka oppure da Kafka ad una
-  # sorgente B. Ad esempio, configurare un connettore che
-  # consente di inviare messaggi a Kafka all'inserimento di un
-  # nuovo record all'interno di una tabella di un database SQL
-  #
-  # In questo caso, si usa un'immagine di kafka-connect con 
-  # datagen che permetta la generazione di dati finti.
-
-  kafka-connect:
-    image: cnfldemos/kafka-connect-datagen:0.6.7-8.0.0
-    hostname:       kafka-connect
-    container_name: kafka-connect
-    depends_on:
-      - kafka
-      - schema-registry
-#    ports:
-#      - "8083:8083"
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS:   kafka:29092
-      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
-      # CONNECT_BOOTSTRAP_SERVERS: 'kafka:29092'
-      CONNECT_REST_PORT: 8083
-      CONNECT_REST_LISTENERS: http://0.0.0.0:8083
-      CONNECT_REST_ADVERTISED_HOST_NAME: connect
-      CONNECT_GROUP_ID: kafka-connect
-      CONNECT_CONFIG_STORAGE_TOPIC: __connect-config
-      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
-      CONNECT_OFFSET_STORAGE_TOPIC: __connect-offsets
-      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_STATUS_STORAGE_TOPIC: __connect-status
-      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
-      CONNECT_KEY_CONVERTER:   org.apache.kafka.connect.storage.StringConverter
-      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
-      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8085
-      CONNECT_PLUGIN_PATH:    "/usr/share/java,/usr/share/confluent-hub-components"
-
-  # Prometheus è un servizio che esponse funzionalità di TSD,
-  # cioè è in grado di storicizzare l'avanzamento di un valore
-  # nel tempo e di esportare l'evoluzione di una grandezza 
-  # misurata (qualunque essa sia)
+  # Prometheus consente di estrapolare metriche per tutti
+  # i servizi che espongono delle metriche. La lista
+  # completa dei componenti che offrono integrazione con
+  # questo strumento è disponibile qui: 
+  # https://prometheus.io/docs/instrumenting/exporters/
+  # 
   prometheus:
-    image: prom/prometheus
+    image:          prom/prometheus:latest
     container_name: prometheus
+    restart: on-failure
     ports:
-      - '9090:9090'
+      - "9090:9090"
     volumes:
       - ./prometheus:/etc/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-    restart: on-failure
-#    restart: always
 
-
-  # Kafka Exporter è una sonda che, installata all'interno
-  # di un cluster Kafka, consente di estrapolare metriche
+  # Dalla pagina: https://github.com/danielqsj/kafka_exporter
+  # questo strumento consente l'export di metriche da un cluster
+  # Kakfa, in particolare dai processi broker
   kafka-exporter:
-    image: danielqsj/kafka-exporter:latest
+    image:          danielqsj/kafka-exporter:latest
     container_name: kafka-exporter
+    restart: on-failure
     ports:
       - "9308:9308"
-    command:
-      - --kafka.server=kafka:29092
     depends_on:
       - kafka
-    restart: on-failure
+    command:
+      - '--kafka.server=kafka:29092'
 
-  # Grafana è un servizio di visualizzazione. Definita una
-  # sorgente di dati (ad esempio Prometheus), Grafana permette
-  # di costruire dei cruscotti interattivi per la visualizzazione
-  # quantitativa di metriche 
   grafana:
-    image: grafana/grafana
+    image:          grafana/grafana:latest
     container_name: grafana
+    restart: on-failure
+    # restart: always
     ports:
-      - '3000:3000'
+      - "3000:3000"
     # volumes:
     #   - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
     #   - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
     #   - ./grafana/dashboards:/etc/grafana/dashboards
     #   - ./grafana/grafana.ini:/etc/grafana/grafana.ini
-    environment:
-      - GF_AUTH_PROXY_ENABLED=true
-      - GF_AUTH_PROXY_HEADER_NAME=X-WEBAUTH-USER
-      - GF_AUTH_PROXY_HEADER_PROPERTY=username
-      - GF_AUTH_PROXY_AUTO_SIGN_UP=true
     depends_on:
       - prometheus
-    restart: on-failure
-#    restart: always
+    # environment:
+    #   GF_AUTH_PROXY_ENABLED:         "true"
+    #   GF_AUTH_PROXY_HEADER_NAME:     "X-WEBAUTH-USER"
+    #   GF_AUTH_PROXY_HEADER_PROPERTY: "username"
+    #   GF_AUTH_PROXY_AUTO_SIGN_UP:    "true"
