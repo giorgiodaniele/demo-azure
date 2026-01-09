@@ -7,73 +7,80 @@ volumes:
 services:
 
   nginx:
-    image: nginx:alpine
-    container_name: nginx
+    image: jc21/nginx-proxy-manager:latest
+    container_name: reverse-proxy
     restart: unless-stopped
-    depends_on:
-      - akhq
-      - schema-registry
-      - connect
-      - grafana
-      - prometheus
     ports:
-      - "8080:80"
+      - "8080:80"    # access to proxy services
+      - "81:81"      # web access
+      # - "443:443"  # HTTPS (quando vuoi → attualmente NON usato)
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./npm/data:/data
+      - ./npm/letsencrypt:/etc/letsencrypt
 
   kafka:
-      image: confluentinc/cp-kafka:8.0.0
-      hostname: kafka
-      container_name: kafka
-      restart: unless-stopped
-      # ports:
-      # - "9092:9092"
-      # - "9091:9091"
-      # - "1234:1234"
-      volumes:
-        - kafka-data:/var/lib/kafka/data:Z
-        # - ./kafka/prometheus:/opt/prometheus:Z
-      environment:
+    image: confluentinc/cp-kafka:8.0.0
+    hostname: kafka
+    container_name: kafka
+    restart: unless-stopped
 
-        # Configurazione di un processo kafka con il ruolo di
-        # broker e controller. Si definiscono due listeners,
-        # uno per parlare con gli altri broker (PLAINTEXT),
-        # l'altro per parlare con altri controller (CONTROLLER)
-        KAFKA_NODE_ID: 1
-        KAFKA_PROCESS_ROLES:                  broker,controller
-        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-        KAFKA_LISTENERS:                      CONTROLLER://kafka:29093,PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092
-        KAFKA_CONTROLLER_LISTENER_NAMES:      CONTROLLER
-        KAFKA_INTER_BROKER_LISTENER_NAME:     PLAINTEXT
-        KAFKA_CONTROLLER_QUORUM_VOTERS:       1@kafka:29093
-        KAFKA_ADVERTISED_LISTENERS:           PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+    # Porte NON esposte all’host (Kafka accessibile solo da rete Docker)
+    # ports:
+    #   - "9092:9092"
+    #   - "9091:9091"
+    #   - "1234:1234"
 
-        # Dato un topic, questo può avere da 1 ad N partizioni
-        # Ogni partizione è il contenitore logico dei messaggi
-        # inviati al topic. I messaggi sono salvati in formato
-        # compresso utilizzando gzip.
-        KAFKA_NUM_PARTITIONS: 12
-        KAFKA_COMPRESSION_TYPE: gzip
-        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      # Volume Prometheus NON usato
+      # - ./kafka/prometheus:/opt/prometheus:Z
 
-        # KAFKA_LOG_DIRS:                  '/tmp/kraft-combined-logs'
-        # KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-        CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    environment:
 
-        # JMX & Prometheus settings
-        KAFKA_JMX_PORT: 9091
-        KAFKA_JMX_HOSTNAME: kafka
+      # Configurazione di un processo kafka con il ruolo di
+      # broker e controller. Si definiscono due listeners,
+      # uno per parlare con gli altri broker (PLAINTEXT),
+      # l'altro per parlare con altri controller (CONTROLLER)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://kafka:29093,PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+
+      # Dato un topic, questo può avere da 1 ad N partizioni
+      # Ogni partizione è il contenitore logico dei messaggi
+      # inviati al topic. I messaggi sono salvati in formato
+      # compresso utilizzando gzip.
+      KAFKA_NUM_PARTITIONS: 12
+      KAFKA_COMPRESSION_TYPE: gzip
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+      # Directory log custom NON usata (default Kafka)
+      # KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+
+      # Auto-create topic NON usato
+      # KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+      # JMX & Prometheus settings
+      KAFKA_JMX_PORT: 9091
+      KAFKA_JMX_HOSTNAME: kafka
 
   # Servizio HTTP che salva gli schema Avro/JSON/Protobuf in Kafka
-  # Si collega al cluster Kakfa come client ed espone un listeners
+  # Si collega al cluster Kafka come client ed espone un listener
   # a tutto il mondo sulla porta 8085
   schema-registry:
     image: confluentinc/cp-schema-registry:8.0.0
     hostname: schema-registry
     container_name: schema-registry
     restart: on-failure
+    # Porta NON esposta all’host (accesso solo interno)
     # ports:
     #   - "8085:8085"
     depends_on:
@@ -84,10 +91,9 @@ services:
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8085
       SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: INFO
 
-  # Kakfa connect è un servizio che consente di eseguire dei connettori
-  # ossia, delle procedure standard per trasferire dati da/verso Kakfa
-  # in modo trasparente. Anch'esso è un client del cluster Kafka, si
-  # collega ai broker ed espone un listener sulla porta 8083
+  # Kafka Connect è un servizio che consente di eseguire dei connettori
+  # ossia delle procedure standard per trasferire dati da/verso Kafka
+  # in modo trasparente. Anch'esso è un client del cluster Kafka
   connect:
     image: cnfldemos/kafka-connect-datagen:0.6.7-8.0.0
     hostname: connect
@@ -96,6 +102,7 @@ services:
     depends_on:
       - kafka
       - schema-registry
+    # Porta REST NON esposta all’host
     # ports:
     #   - "8083:8083"
     environment:
@@ -119,6 +126,7 @@ services:
     image: tchiotludo/akhq:latest
     container_name: akhq
     restart: unless-stopped
+    # Porta web AKHQ NON esposta all’host
     # ports:
     #   - "8080:8080"
     depends_on:
@@ -142,12 +150,13 @@ services:
     image: prom/prometheus:latest
     container_name: prometheus
     restart: on-failure
+    # Porta Prometheus NON esposta all’host
     # ports:
     #   - "9090:9090"
     volumes:
       - ./prometheus:/etc/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
+      - "--config.file=/etc/prometheus/prometheus.yml"
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:latest
@@ -156,12 +165,13 @@ services:
     depends_on:
       - kafka
     command:
-      - '--kafka.server=kafka:29092'
+      - "--kafka.server=kafka:29092"
 
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
     restart: on-failure
+    # Porta Grafana NON esposta all’host
     # ports:
     #   - "3000:3000"
     depends_on:
