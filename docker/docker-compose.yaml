@@ -115,15 +115,10 @@ services:
       # KAFKA_JMX_HOSTNAME: localhost
       # KAFKA_JMX_OPTS: '-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.rmi.port=9091 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -javaagent:/usr/share/java/cp-base-new/jmx_prometheus_javaagent-0.20.0.jar=1234:/opt/prometheus/config.yaml'
       
-      # Indichiamo al container di eseguire sia il processo del broker
-      # che quello del controller
       KAFKA_PROCESS_ROLES:              'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS:   '1@kafka:29093'
-      # Avvia Kafka e mettilo in ascolto su tre endpoint diversi, ognuno con un ruolo preciso.
       KAFKA_LISTENERS:                  'PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092'
-      # Specifica quale listener usano i broker per parlarsi tra loro
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      # Specifica quale listener i broker usano per parlare con il controller
       KAFKA_CONTROLLER_LISTENER_NAMES:  'CONTROLLER'
       KAFKA_LOG_DIRS:                   '/tmp/kraft-combined-logs'
       KAFKA_AUTO_CREATE_TOPICS_ENABLE:  'true'
